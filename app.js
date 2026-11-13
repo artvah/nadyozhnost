@@ -93,6 +93,7 @@ const btnRestart = document.getElementById('btn-restart');
 
 const achievementStorageKey = 'nadyozhnost-achievements-v1';
 const sessionStorageKey = 'nadyozhnost-attempt-v1';
+const menuStorageKey = 'nadyozhnost-menu-v1';
 const studyStorageKey = 'nadyozhnost-study-v1';
 const soundStorageKey = 'nadyozhnost-sound-v1';
 const retroFontStorageKey = 'nadyozhnost-retro-font';
@@ -198,13 +199,14 @@ function saveAttempt(screen = 'test', failed = false) {
     }
 }
 
-function restoreAttempt() {
-    let saved;
+function readSavedAttempt() {
     try {
-        saved = JSON.parse(lastAttempt ?? localStorage.getItem(sessionStorageKey));
-    } catch {
-        return;
-    }
+        return JSON.parse(lastAttempt ?? localStorage.getItem(sessionStorageKey));
+    } catch { return null; }
+}
+
+function restoreAttempt() {
+    const saved = readSavedAttempt();
     if (!saved || saved.bank !== questionBankVersion || !orderModes.includes(saved.orderMode) ||
         !Array.from(difficultyOptions).some(option => option.dataset.difficulty === saved.runDifficulty)) return;
 
@@ -1207,6 +1209,7 @@ btnQuestionOrder.addEventListener('click', () => {
     orderMode = orderModes[(orderModes.indexOf(orderMode) + 1) % orderModes.length];
     updateOrderLabel();
     updateDifficultyHint();
+    saveMenuSettings();
     if (testData) setupRangeButtons(testData.questions.length);
 });
 
@@ -1220,6 +1223,7 @@ for (const option of difficultyOptions) {
     option.addEventListener('click', () => {
         difficulty = option.dataset.difficulty;
         updateDifficultyMenu();
+        saveMenuSettings();
         if (testData) {
             setupRangeButtons(testData.questions.length);
             fitWelcomeScreen();
@@ -1235,6 +1239,33 @@ function updateDifficultyMenu() {
     difficultyLabel.setAttribute('aria-label', 'Сложность: ' + selected.textContent);
     for (const button of difficultyOptions) button.setAttribute('aria-pressed', String(button === selected));
     updateDifficultyHint();
+}
+
+function saveMenuSettings() {
+    try { localStorage.setItem(menuStorageKey, JSON.stringify({ orderMode, difficulty })); } catch { /* Optional setting. */ }
+}
+
+function updateResumeButton() {
+    const saved = readSavedAttempt();
+    const resumable = saved?.bank === questionBankVersion && saved?.screen === 'test' && !saved.failed &&
+        Array.isArray(saved.testOrder) && Number.isInteger(saved.currentIndex) &&
+        saved.currentIndex >= 0 && saved.currentIndex < saved.testOrder.length;
+    btnResume.hidden = !resumable;
+    if (resumable) btnResume.textContent = `Продолжить · вопрос ${saved.currentIndex + 1}/${saved.testOrder.length}`;
+}
+
+function openSavedMenu() {
+    const saved = readSavedAttempt();
+    let menu;
+    try { menu = JSON.parse(localStorage.getItem(menuStorageKey)); } catch { /* Use the last attempt if available. */ }
+    if (saved?.bank === questionBankVersion && saved.failed && saved.screen === 'test') restoreAttempt();
+    const settings = menu ?? saved;
+    if (orderModes.includes(settings?.orderMode)) orderMode = settings.orderMode;
+    if (Object.hasOwn(difficultyNames, settings?.difficulty)) difficulty = settings.difficulty;
+    updateOrderLabel();
+    updateDifficultyMenu();
+    updateResumeButton();
+    showScreen(welcomeScreen);
 }
 
 document.addEventListener('click', event => {
@@ -1775,11 +1806,14 @@ failureNotice.addEventListener('click', () => {
 
 btnMenu.addEventListener('click', () => {
     if (failureTimer !== null) finishTest(true);
-    btnResume.hidden = !testScreen.classList.contains('active');
-    if (!btnResume.hidden) btnResume.textContent = `Продолжить · вопрос ${currentIndex + 1}/${testOrder.length}`;
+    saveMenuSettings();
+    updateResumeButton();
     showScreen(welcomeScreen);
 });
-btnResume.addEventListener('click', restoreAttempt);
+btnResume.addEventListener('click', () => {
+    restoreAttempt();
+    if (testScreen.classList.contains('active')) saveMenuSettings();
+});
 
 btnRestart.addEventListener('click', () => {
     if (studyRun) {
@@ -1932,4 +1966,4 @@ window.visualViewport?.addEventListener('resize', fitWelcomeScreen);
 document.addEventListener('fullscreenchange', fitWelcomeScreen);
 document.addEventListener('fullscreenchange', fitFullscreenQuiz);
 
-testDataReady.then(() => { if (testData) restoreAttempt(); });
+testDataReady.then(() => { if (testData) openSavedMenu(); });
