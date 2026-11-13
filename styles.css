@@ -2635,3 +2635,35 @@ button.achievement-card:active { box-shadow: inset 2px 2px 0 rgb(0 0 0 / 28%); }
     87%, 93% { translate: -1px 0; }
     90%, 96% { translate: 1px 0; }
 }
+
+/* Campaign completion colors sit beneath the selected-range outline. */
+:is(#range-buttons, #result-range-buttons) .range-button[data-completion] {
+    color: #1c3324;
+    background: #d3eccf;
+    border-color: #43814b;
+}
+
+:is(#range-buttons, #result-range-buttons) .range-button[data-completion="perfect"] {
+    color: #553c0f;
+    background: #ffe596;
+    border-color: #9b6e1b;
+}
+
+:is(#range-buttons, #result-range-buttons) .range-button[data-completion="hardcore"] {
+    color: #291b36;
+    background: linear-gradient(90deg, #ffbabc, #ffe29e, #c9edab, #b5e8fa, #e7c5ff, #ffbabc);
+    background-size: 250% 100%;
+    border-color: #714b86;
+    box-shadow: 1px 1px 0 #714b86;
+}
+
+:is(#range-buttons, #result-range-buttons) .range-button[data-completion][aria-pressed="true"] {
+    outline: 2px solid currentColor;
+    outline-offset: -3px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    :is(#range-buttons, #result-range-buttons) .range-button[data-completion="hardcore"] {
+        animation: campaign-shimmer 3s ease-in-out infinite;
+    }
+}

@@ -452,6 +452,7 @@ function parseMarkdownTest(mdText) {
 let activeRange = null;
 const campaignKey = 'nadyozhnost-campaign-v1';
 const campaignProgressByDifficulty = new Map();
+const campaignPerfectByDifficulty = new Map();
 
 function campaignStorageKey(mode) {
     // The old single track becomes the peaceful track.
@@ -479,6 +480,29 @@ function setCampaignProgress(mode, value) {
         localStorage.setItem(campaignStorageKey(mode), String(value));
     } catch {
         // Keep progress in memory when storage is disabled.
+    }
+}
+
+function getCampaignPerfect(mode) {
+    if (!campaignPerfectByDifficulty.has(mode)) {
+        let stages = [];
+        try {
+            const saved = JSON.parse(localStorage.getItem(`${campaignStorageKey(mode)}-perfect`));
+            if (Array.isArray(saved)) stages = saved.filter(stage => Number.isSafeInteger(stage) && stage >= 0 && stage % 5 === 0);
+        } catch {
+            // Older saves have no record of flawless stages.
+        }
+        campaignPerfectByDifficulty.set(mode, new Set(stages));
+    }
+    return campaignPerfectByDifficulty.get(mode);
+}
+
+function saveCampaignPerfect(mode, stages) {
+    campaignPerfectByDifficulty.set(mode, stages);
+    try {
+        localStorage.setItem(`${campaignStorageKey(mode)}-perfect`, JSON.stringify([...stages]));
+    } catch {
+        // Keep the ratings in memory if browser storage is disabled.
     }
 }
 
@@ -577,16 +601,23 @@ function setupRangeButtons(total, resultBlock = null) {
                 const entry = entries[index];
                 button.disabled = !entry;
                 button.toggleAttribute('data-placeholder', !entry);
+                delete button.dataset.completion;
+                button.removeAttribute('aria-label');
                 if (!entry) {
                     button.textContent = '';
                     button.removeAttribute('aria-pressed');
                     button.onclick = null;
                     return;
                 }
-                const [text, active, action, locked = false] = entry;
+                const [text, active, action, locked = false, completion] = entry;
                 button.disabled = locked;
                 button.toggleAttribute('data-locked', locked);
                 button.title = locked ? 'Откроется по мере прохождения' : '';
+                if (completion && !locked) {
+                    button.dataset.completion = completion;
+                    button.title = { clear: 'Пройдено', perfect: 'Без ошибок', hardcore: 'Пройдено на хардкоре' }[completion];
+                    button.setAttribute('aria-label', `${text} · ${button.title}`);
+                }
                 if (button.textContent !== text) button.textContent = text;
                 button.setAttribute('aria-pressed', String(active));
                 button.onclick = () => {
@@ -618,6 +649,12 @@ function setupRangeButtons(total, resultBlock = null) {
 
     function render() {
         const campaignProgress = campaign ? getCampaignProgress() : 0;
+        const perfectStages = campaign ? getCampaignPerfect(difficulty) : null;
+        function completion(start, end) {
+            if (!campaign || end > campaignProgress) return;
+            if (difficulty === 'hardcore') return 'hardcore';
+            return blocks(start, end, 5).every(([stage]) => perfectStages.has(stage)) ? 'perfect' : 'clear';
+        }
         const shownHundred = hundred ?? 0;
         const shownFifty = fifty ?? shownHundred;
         const hundredEnd = Math.min(shownHundred + 100, total);
@@ -625,19 +662,19 @@ function setupRangeButtons(total, resultBlock = null) {
 
         updateHundreds?.([
             ['Все вопросы', hundred === null, () => { hundred = null; fifty = null; part = null; },
-                !campaignRangeAvailable(null, total, total, total)],
+                !campaignRangeAvailable(null, total, total, total), completion(0, total)],
             ...hundreds.map(([start, end]) => [label(start, end), hundred === start, () => {
                 hundred = start;
                 fifty = null;
                 part = null;
-            }, campaign && start > campaignProgress]),
+            }, campaign && start > campaignProgress, completion(start, end)]),
         ]);
         updateHalves(blocks(shownHundred, hundredEnd, 50).map(([start, end]) => [
             label(start, end), fifty === start, () => {
                 hundred = shownHundred;
                 fifty = start;
                 part = null;
-            }, campaign && start > campaignProgress,
+            }, campaign && start > campaignProgress, completion(start, end),
         ]));
         updateSizes(sizes.map(value => ['По ' + value, size === value, () => {
             hundred = shownHundred;
@@ -651,7 +688,7 @@ function setupRangeButtons(total, resultBlock = null) {
                 hundred = shownHundred;
                 fifty = shownFifty;
                 part = start;
-            }, !campaignRangeAvailable(start, end, size, total),
+            }, !campaignRangeAvailable(start, end, size, total), completion(start, end),
         ]));
 
         const start = part ?? fifty ?? hundred;
@@ -1024,7 +1061,10 @@ function submitAnswer() {
 }
 
 function failRun() {
-    if (orderMode === 'campaign' && runDifficulty === 'hardcore') setCampaignProgress(runDifficulty, 0);
+    if (orderMode === 'campaign' && runDifficulty === 'hardcore') {
+        setCampaignProgress(runDifficulty, 0);
+        saveCampaignPerfect(runDifficulty, new Set());
+    }
     saveAttempt('test', true);
     failureNotice.hidden = false;
     btnNext.disabled = true;
@@ -1115,10 +1155,16 @@ function finishTest(failed = false, restoringResult = false) {
     const flawless = correctCount === testOrder.length;
     const hardcoreReset = failed && orderMode === 'campaign' && runDifficulty === 'hardcore';
     let campaignCompleted = false;
-    if (!restoringResult && orderMode === 'campaign' && !failed && !retryingErrors && unansweredCount === 0 &&
-        activeRange?.size === 5 && activeRange.start === getCampaignProgress(runDifficulty)) {
-        setCampaignProgress(runDifficulty, activeRange.end);
-        campaignCompleted = activeRange.end === testData.questions.length;
+    if (!restoringResult && orderMode === 'campaign' && !failed && !retryingErrors && unansweredCount === 0 && activeRange?.size === 5) {
+        if (activeRange.start === getCampaignProgress(runDifficulty)) {
+            setCampaignProgress(runDifficulty, activeRange.end);
+            campaignCompleted = activeRange.end === testData.questions.length;
+        }
+        if (flawless && runDifficulty !== 'hardcore') {
+            const stages = getCampaignPerfect(runDifficulty);
+            stages.add(activeRange.start);
+            saveCampaignPerfect(runDifficulty, stages);
+        }
     }
     renderResultRanges(hardcoreReset);
 
